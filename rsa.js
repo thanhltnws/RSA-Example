@@ -1,3 +1,4 @@
+
 const crypto = require('crypto');
 
 /**
@@ -36,12 +37,13 @@ function encrypt(data, publicKey) {
     // Generate random AES-256 key and IV
     const aesKey = crypto.randomBytes(32);
     const iv = crypto.randomBytes(16);
-
-    // Encrypt data with AES-256-CBC
-    const cipher = crypto.createCipheriv('aes-256-cbc', aesKey, iv);
+    
+    // Encrypt data with AES-256-GCM
+    const cipher = crypto.createCipheriv('aes-256-gcm', aesKey, iv);
     let encryptedData = cipher.update(data, 'utf8', 'base64');
     encryptedData += cipher.final('base64');
-
+    const authTag = cipher.getAuthTag();
+    
     // Encrypt AES key with RSA public key
     const encryptedKey = crypto.publicEncrypt(
       {
@@ -51,14 +53,15 @@ function encrypt(data, publicKey) {
       },
       aesKey
     );
-
+    
     // Package everything together
     const result = {
       key: encryptedKey.toString('base64'),
       iv: iv.toString('base64'),
       data: encryptedData,
+      authTag: authTag.toString('base64')
     };
-
+    
     // Return as base64 encoded JSON
     return Buffer.from(JSON.stringify(result)).toString('base64');
   } catch (error) {
@@ -77,8 +80,8 @@ function decrypt(encryptedData, privateKey) {
   try {
     // Parse the encrypted package
     const packageJson = Buffer.from(encryptedData, 'base64').toString('utf8');
-    const { key: encryptedKey, iv: ivBase64, data } = JSON.parse(packageJson);
-
+    const { key: encryptedKey, iv: ivBase64, data, authTag } = JSON.parse(packageJson);
+    
     // Decrypt AES key using RSA private key
     const aesKey = crypto.privateDecrypt(
       {
@@ -88,13 +91,15 @@ function decrypt(encryptedData, privateKey) {
       },
       Buffer.from(encryptedKey, 'base64')
     );
-
+    
     // Decrypt data using AES key
     const iv = Buffer.from(ivBase64, 'base64');
-    const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, iv);
+    decipher.setAuthTag(Buffer.from(authTag, 'base64'));
+    
     let decrypted = decipher.update(data, 'base64', 'utf8');
     decrypted += decipher.final('utf8');
-
+    
     return decrypted;
   } catch (error) {
     throw new Error(`Decryption failed: ${error.message}`);
