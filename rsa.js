@@ -17,7 +17,6 @@ function generateRSAKeyPair(keySize = 2048) {
       type: 'spki',
     },
   });
-
   return {
     privateKey,
     publicKey,
@@ -25,55 +24,85 @@ function generateRSAKeyPair(keySize = 2048) {
 }
 
 /**
- * Encrypt data using an RSA public key
- * Uses RSA-OAEP with SHA-256
- *
+ * Encrypt data using hybrid encryption (RSA + AES)
+ * Can handle data of any size
+ * 
  * @param {string} data - Plain text data to encrypt
  * @param {string} publicKey - RSA public key (PEM format)
- * @returns {string} Encrypted data in base64 format
+ * @returns {string} Encrypted package in base64 format
  */
 function encrypt(data, publicKey) {
   try {
-    const buffer = Buffer.from(data, 'utf8');
+    // Generate random AES-256 key and IV
+    const aesKey = crypto.randomBytes(32);
+    const iv = crypto.randomBytes(16);
 
-    const encrypted = crypto.publicEncrypt(
+    // Encrypt data with AES-256-CBC
+    const cipher = crypto.createCipheriv('aes-256-cbc', aesKey, iv);
+    let encryptedData = cipher.update(data, 'utf8', 'base64');
+    encryptedData += cipher.final('base64');
+
+    // Encrypt AES key with RSA public key
+    const encryptedKey = crypto.publicEncrypt(
       {
         key: publicKey,
         padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
         oaepHash: 'sha256',
       },
-      buffer
+      aesKey
     );
 
-    return encrypted.toString('base64');
+    // Package everything together
+    const result = {
+      key: encryptedKey.toString('base64'),
+      iv: iv.toString('base64'),
+      data: encryptedData,
+    };
+
+    // Return as base64 encoded JSON
+    return Buffer.from(JSON.stringify(result)).toString('base64');
   } catch (error) {
     throw new Error(`Encryption failed: ${error.message}`);
   }
 }
 
 /**
- * Decrypt data using an RSA private key
- * Uses RSA-OAEP with SHA-256
- *
- * @param {string} encryptedData - Encrypted data in base64 format
+ * Decrypt data encrypted with encrypt function
+ * 
+ * @param {string} encryptedData - Encrypted package in base64 format
  * @param {string} privateKey - RSA private key (PEM format)
  * @returns {string} Decrypted plain text
  */
 function decrypt(encryptedData, privateKey) {
   try {
-    const buffer = Buffer.from(encryptedData, 'base64');
+    // Parse the encrypted package
+    const packageJson = Buffer.from(encryptedData, 'base64').toString('utf8');
+    const { key: encryptedKey, iv: ivBase64, data } = JSON.parse(packageJson);
 
-    const decrypted = crypto.privateDecrypt(
+    // Decrypt AES key using RSA private key
+    const aesKey = crypto.privateDecrypt(
       {
         key: privateKey,
         padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
         oaepHash: 'sha256',
       },
-      buffer
+      Buffer.from(encryptedKey, 'base64')
     );
 
-    return decrypted.toString('utf8');
+    // Decrypt data using AES key
+    const iv = Buffer.from(ivBase64, 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv);
+    let decrypted = decipher.update(data, 'base64', 'utf8');
+    decrypted += decipher.final('utf8');
+
+    return decrypted;
   } catch (error) {
     throw new Error(`Decryption failed: ${error.message}`);
   }
 }
+
+module.exports = {
+  generateRSAKeyPair,
+  encrypt,
+  decrypt,
+};
